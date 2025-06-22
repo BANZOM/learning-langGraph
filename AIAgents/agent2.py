@@ -62,7 +62,7 @@ if os.path.exists(history_path):
                 conversation_history.append(AIMessage(content=message_data["content"]))
 
 # Initial Conversation State
-print("Initial Convo History : ", conversation_history)
+# print("Initial Convo History : ", conversation_history)
 
 while True:
     query = input("You: ")
@@ -85,8 +85,8 @@ while True:
     else:
         print("AI: No response generated.")
 
-    print("\n--- Conversation History ---")
-    print(conversation_history)
+    # print("\n--- Conversation History ---")
+    # print(conversation_history)
 
 
 #Save the conversation history to a file as a JSON object
