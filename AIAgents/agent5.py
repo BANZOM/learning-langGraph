@@ -1,4 +1,3 @@
-### RAG Agent
 import os
 from dotenv import load_dotenv
 from typing import TypedDict, Annotated, Sequence
@@ -13,57 +12,76 @@ from langchain_chroma import Chroma
 
 load_dotenv()
 
+# Configuration
+MODEL_NAME = "gemini-2.5-flash-lite-preview-06-17"
+EMBEDDING_MODEL = "models/text-embedding-004"
+COLLECTION_NAME = "rag_agent_collection"
+DOCUMENTS_DIR = os.path.join(os.getcwd(), "AIAgents", "Documents")
+VECTOR_STORE_DIR = os.path.join(os.getcwd(), "AIAgents", "VectorStore")
+GRAPH_IMAGE_PATH = os.path.join(os.getcwd(), "AIAgents", "imgs", "agent-5-graph.png")
+CHUNK_SIZE = 1000
+CHUNK_OVERLAP = 200
+SEARCH_KWARGS = {"k": 5}
+
+# Initialize LLM and Embeddings
 llm = ChatGoogleGenerativeAI(
-    model="gemini-2.5-flash-lite-preview-06-17",
+    model=MODEL_NAME,
     temperature=0.2,
     google_api_key=os.getenv("GEMINI_API_KEY")
 )
 
 embeddings = GoogleGenerativeAIEmbeddings(
-    model="models/text-embedding-004",
+    model=EMBEDDING_MODEL,
     google_api_key=os.getenv("GEMINI_API_KEY")
 )
 
-if input("Do you want to create a new vector store? (yes/no): ").strip().lower() == "yes":
+def create_vector_store():
+    """Creates a new Chroma vector store from documents."""
     print("Creating a new vector store...")
-    collection_name = "rag_agent_collection"
-    documents_dir = os.path.join(os.getcwd(), "AIAgents", "Documents")
-    vector_store_dir = os.path.join(os.getcwd(), "AIAgents", "VectorStore")
 
-    if not os.path.exists(documents_dir):
-        os.makedirs(documents_dir)
-    if not os.path.exists(vector_store_dir):
-        os.makedirs(vector_store_dir)
+    if not os.path.exists(DOCUMENTS_DIR):
+        os.makedirs(DOCUMENTS_DIR)
+    if not os.path.exists(VECTOR_STORE_DIR):
+        os.makedirs(VECTOR_STORE_DIR)
 
     documents = []
-    for file in os.listdir(documents_dir):
+    for file in os.listdir(DOCUMENTS_DIR):
         if file.endswith(".txt"):
-            loader = TextLoader(os.path.join(documents_dir, file))
+            loader = TextLoader(os.path.join(DOCUMENTS_DIR, file))
             documents.extend(loader.load())
 
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP)
     texts = text_splitter.split_documents(documents)
         
     vector_db = Chroma.from_documents(
         documents=texts,
         embedding=embeddings,
-        collection_name=collection_name,
-        persist_directory=vector_store_dir
+        collection_name=COLLECTION_NAME,
+        persist_directory=VECTOR_STORE_DIR
     )
 
-    print(f"Vector store created and persisted at {vector_store_dir} with collection name '{collection_name}'.")
-else:
+    print(f"Vector store created and persisted at {VECTOR_STORE_DIR} with collection name '{COLLECTION_NAME}'.")
+    return vector_db
+
+def load_existing_vector_store():
+    """Loads an existing Chroma vector store."""
     print("Using existing vector store...")
-    vector_db = Chroma(
-        collection_name="rag_agent_collection",
+    return Chroma(
+        collection_name=COLLECTION_NAME,
         embedding_function=embeddings,
-        persist_directory=os.path.join(os.getcwd(), "AIAgents", "VectorStore")
+        persist_directory=VECTOR_STORE_DIR
     )
 
-## 
+# Create or load vector store
+if input("Do you want to create a new vector store? (yes/no): ").strip().lower() == "yes":
+    vector_db = create_vector_store()
+else:
+    vector_db = load_existing_vector_store()
+
+# Retriever
 retriever = vector_db.as_retriever(
     search_type="similarity",
-    search_kwargs={"k": 5}  # Number of documents to retrieve
+    search_kwargs=SEARCH_KWARGS
 )
 
 @tool
@@ -91,7 +109,6 @@ class AgentState(TypedDict):
     """
     messages: Annotated[Sequence[BaseMessage], add_messages]
 
-
 # Conditional Node
 def should_continue(state: AgentState) -> bool:
     """
@@ -106,18 +123,13 @@ def should_continue(state: AgentState) -> bool:
         bool: True if the last message is a ToolMessage, False otherwise.
     """
     last_message = state["messages"][-1]
-    if last_message.tool_calls:
-        # print(f"Last message is a ToolMessage: {last_message.tool_calls}")
-        return True
-    else:
-        # print(f"Last message is not a ToolMessage: {last_message}")
-        return False
+    return bool(last_message.tool_calls)
 
 # Node 1:
 def start_node(state: AgentState) -> AgentState:
     """
     The starting node of the agent's state graph.
-    It initializes the conversation with a system message and a human message.
+    It initializes the conversation with a system message.
     
     Args:
         state (AgentState): The current state of the agent.
@@ -131,9 +143,7 @@ def start_node(state: AgentState) -> AgentState:
     Please always cite the specific parts of the documents you use in your answers.
     If you couldn't find the answer from context, just say you cannot get the answer from context, and give a general overview about the query from your understanding of question.
     """)
-    return {
-        "messages": [system_message]
-    }
+    return {"messages": [system_message]}
 
 # Node 2:
 def query_node(state: AgentState) -> AgentState:
@@ -146,9 +156,7 @@ def query_node(state: AgentState) -> AgentState:
         AgentState: The updated state with the new messages after querying the LLM.
     """
     response = llm.invoke(state["messages"])
-    return {
-        "messages": [response]
-    }
+    return {"messages": [response]}
 
 # Node 3: Retrieve Node
 def retrieve_node(state: AgentState) -> AgentState:
@@ -165,19 +173,18 @@ def retrieve_node(state: AgentState) -> AgentState:
     tool_calls = state['messages'][-1].tool_calls
     results = []
     for t in tool_calls:
-        print(f"Calling Tool: {t['name']} with query: {t['args'].get('query', 'No query provided')}")
+        tool_name = t['name']
+        query = t['args'].get('query', '')
+        print(f"Calling Tool: {tool_name} with query: {query}")
         
-        if not t['name'] in tools_dict: # Checks if a valid tool is present
-            print(f"\nTool: {t['name']} does not exist.")
+        if tool_name not in tools_dict:
+            print(f"\nTool: {tool_name} does not exist.")
             result = "Incorrect Tool Name, Please Retry and Select tool from List of Available tools."
-        
         else:
-            result = tools_dict[t['name']].invoke(t['args'].get('query', ''))
+            result = tools_dict[tool_name].invoke(query)
             print(f"Result length: {len(str(result))}")
-            
-
-        # Appends the Tool Message
-        results.append(ToolMessage(tool_call_id=t['id'], name=t['name'], content=str(result)))
+        
+        results.append(ToolMessage(tool_call_id=t['id'], name=tool_name, content=str(result)))
 
     print("Tools Execution Complete. Back to the model!")
     return {'messages': results}
@@ -220,6 +227,5 @@ if __name__ == "__main__":
 
     # Save the graph image to a file
     image_bytes = app.get_graph().draw_mermaid_png()
-    image_path = os.path.join(os.getcwd(), "AIAgents", "imgs", "agent-5-graph.png")
-    with open(image_path, "wb") as f:
+    with open(GRAPH_IMAGE_PATH, "wb") as f:
         f.write(image_bytes)
