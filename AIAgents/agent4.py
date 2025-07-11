@@ -135,12 +135,6 @@ def condition_node(state: AgentState) -> str:
                 return "continue"
     return "continue"
 
-
-### Helper function to preety print the tool calls
-def pretty_print_tool_calls(messages):
-    print(messages)
-
-
 # State Graph Structure
 graph = StateGraph(AgentState)
 graph.add_node("INIT", init_node)
